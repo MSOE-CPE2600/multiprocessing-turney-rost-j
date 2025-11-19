@@ -1,115 +1,186 @@
-/// 
-//  mandel.c
-//  Based on example code found here:
-//  https://users.cs.fiu.edu/~cpoellab/teaching/cop4610_fall22/project3.html
-//
-//  Converted to use jpg instead of BMP and other minor changes
-//  
-///
+/**
+ * @file 		: mandelmovie.c
+ * @brief 		: Generates a sequence of Mandelbrot frames using multiprocessing.
+ *
+ * Course 		: CPE 2600
+ * Section	 	: 112
+ * Assignment 	: Lab 11 - Multiprocessing
+ * Author 		: Jesse Rost <rostj@msoe.edu>
+ * Date 		: 11/19/25
+ *
+ * Algorithm:
+ *  - Parse command-line options using getopt to configure:
+ *       * number of children allowed
+ *       * x and y center coordinates
+ *       * initial scale value
+ *  - For each frame (0 to FRAME_COUNT - 1):
+ *       * Wait if current active child count >= allowed number
+ *       * Fork a new child process
+ *       * Child:
+ *           - Compute zoomed scale value
+ *           - Build filename for output image
+ *           - Convert parameters to strings
+ *           - Execute ./mandel using execl with proper arguments
+ *       * Parent:
+ *           - Continue loop to spawn next frame (as allowed)
+ *  - After loop, parent waits for ALL remaining children using wait()
+ *  - Print completion message and exit
+ */
+
+#include "mandelmovie.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
-#include "jpegrw.h"
-#include <sys/wait.h>   // wait()
+#include <sys/wait.h>
+#include <string.h>
 
-// local routines
-static int iteration_to_color( int i, int max );
-static int iterations_at_point( double x, double y, int max );
-static void compute_image( imgRawImage *img, double xmin, double xmax,
-									double ymin, double ymax, int max );
-static void show_help();
+// named constants
 
+#define DEFAULT_CHILDREN 4
+#define DEFAULT_SCALE    4.0
+#define FRAME_COUNT      50
+#define ZOOM_FACTOR      0.02
 
-int main( int argc, char *argv[] )
+#define FILENAME_BUF     64
+#define COORD_BUF        32
+
+// function prototypes
+
+static void generate_frame(int frame_index,
+                           double xcenter,
+                           double ycenter,
+                           double initial_scale);
+
+// function implementations
+
+/**
+ * @brief Generates a single Mandelbrot frame by forking and calling exec().
+ *
+ * @param frame_index  Index of the frame (0–49)
+ * @param xcenter      X coordinate of the Mandelbrot center
+ * @param ycenter      Y coordinate of the Mandelbrot center
+ * @param initial_scale    Initial zoom scale for frame 0
+ */
+static void generate_frame(int frame_index,
+                           double xcenter,
+                           double ycenter,
+                           double initial_scale)
 {
-	int num_children = 4; // default num of children that can run at once
-	int frames = 50; // num of images to make
-	double xcenter = 0.0; // mandelbrot x center
-	double ycenter = 0.0; // mandelbrot y center
-	double scale = 4.0; // starting zool level
-	char c;
+    double frame_scale = initial_scale *
+                         (1.0 - (frame_index * ZOOM_FACTOR));
+
+    char filename[FILENAME_BUF];
+    sprintf(filename, "frame_%02d.jpg", frame_index);
+
+    char x_str[COORD_BUF];
+    char y_str[COORD_BUF];
+    char s_str[COORD_BUF];
+
+    sprintf(x_str, "%.6f", xcenter);
+    sprintf(y_str, "%.6f", ycenter);
+    sprintf(s_str, "%.6f", frame_scale);
+
+    printf("[Child %d] Generating %s at scale %.6f\n",
+           getpid(), filename, frame_scale);
+
+    execl("./mandel", "mandel",
+          "-x", x_str,
+          "-y", y_str,
+          "-s", s_str,
+          "-o", filename,
+          (char *)NULL);
+
+    perror("execl failed");
+    exit(1);
+}
+
+/**
+ * @brief Prints help/usage information for the mandelmovie program.
+ */
+void show_help(void)
+{
+    printf("Use: mandelmovie [options]\n");
+    printf("Where options are:\n");
+    printf("  -n <max>    Max number of concurrent children "
+           "(default = %d)\n", DEFAULT_CHILDREN);
+    printf("  -x <coord>  X coordinate of Mandelbrot center (default 0)\n");
+    printf("  -y <coord>  Y coordinate of Mandelbrot center (default 0)\n");
+    printf("  -s <scale>  Initial zoom scale (default %.1f)\n",
+           DEFAULT_SCALE);
+    printf("  -h          Show this help text\n\n");
+    printf("Generates %d images named frame_00.jpg ... frame_49.jpg.\n",
+           FRAME_COUNT);
+}
 
 
-	// For each command line argument given,
-	// override the appropriate configuration value.
+/**
+ * @brief Program entry point. Generates a 50-frame Mandelbrot zoom movie
+ *        using multiprocessing.
+ *
+ * @param argc  Number of command-line arguments.
+ * @param argv  Array of argument strings.
+ *
+ * @return 0 on successful completion.
+ */
+int main(int argc, char *argv[])
+{
+    int max_children = DEFAULT_CHILDREN;
+    double xcenter = 0.0;
+    double ycenter = 0.0;
+    double scale = DEFAULT_SCALE;
 
-	while((c = getopt(argc,argv,"n:x:y:s:h"))!=-1) {
-		switch(c) 
-		{
-			case 'n':
-				num_children = atof(optarg);
-				break;
-			case 'x':
-				xcenter = atof(optarg);
-				break;
-			case 'y':
-				ycenter = atof(optarg);
-				break;
-			case 's':
-				scale = atoi(optarg);
-				break;
-			case 'h':
-				show_help();
-				exit(1);
-				break;
-		}
-	}
+    int active_children = 0;
 
-	for(int i = 0; i < frames; i++){
-		// make sure we dont spawn too many children 
-		 if (i >= num_children) {
-            wait(NULL);  // wait for one child to finish before spawning another
+    char option;
+
+    while ((option = getopt(argc, argv, "n:x:y:s:h")) != -1) {
+        switch (option) {
+            case 'n':
+                max_children = atoi(optarg);
+                break;
+            case 'x':
+                xcenter = atof(optarg);
+                break;
+            case 'y':
+                ycenter = atof(optarg);
+                break;
+            case 's':
+                scale = atof(optarg);
+                break;
+            case 'h':
+                show_help();
+                return 0;
+            default:
+                show_help();
+                return 1;
         }
-		// pid == 0 → you are in the child process.
-		// pid > 0 → you are in the parent process.
-		// pid < 0 → the fork failed.
-		 pid_t pid = fork();
+    }
+
+    printf("MandelMovie: generating %d frames using up to %d processes...\n",
+           FRAME_COUNT, max_children);
+
+    for (int i = 0; i < FRAME_COUNT; i++) {
+
+        if (active_children >= max_children) {
+            wait(NULL);
+            active_children--;
+        }
+
+        pid_t pid = fork();
 
         if (pid == 0) {
-            // --- Child process ---
-            double frame_scale = scale * (1.0 - (i * 0.02)); // zoom in a little each time
-			// creates a unique filename for each image
-            char filename[64];
-			// naming format is 2 deceimal numbers 
-			// sprintf prints to filename array
-			// filename = "frame_00.jpg"
-            sprintf(filename, "frame_%02d.jpg", i);
-
-			// builds the command string to run the program
-            char command[256];
-            sprintf(command, "./mandel -x %.6f -y %.6f -s %.6f -o %s",
-                    xcenter, ycenter, frame_scale, filename);
-
-            printf("[Child %d] Generating %s (scale = %.6f)\n", getpid(), filename, frame_scale);
-
-            system(command); // run command as typed into terminal
-            exit(0);
-        }
-        else if (pid < 0) {
+            generate_frame(i, xcenter, ycenter, scale);
+        } else if (pid > 0) {
+            active_children++;
+        } else {
             perror("fork failed");
             exit(1);
         }
-	}
+    }
 
-	while (wait(NULL) > 0);
+    while (wait(NULL) > 0) {
+    }
 
     printf("All frames generated successfully.\n");
-
-	return 0;
-}
-
-// Show help message
-void show_help()
-{
-	printf("Use: mandel [options]\n");
-	printf("Where options are:\n");
-	printf("-n <max>    The maximum number of children that can run at once. (default = 4)\n");
-	printf("-x <coord>  X coordinate of image center point. (default = 0)\n");
-	printf("-y <coord>  Y coordinate of image center point. (default = 0)\n");
-	printf("-s <scale>  Scale of the image in Mandlebrot coordinates (X-axis). (default=4)\n");
-	printf("-h          Show this help text.\n");
-	printf("\nSome examples are:\n");
-	printf("mandel -x -0.5 -y -0.5 -s 0.2\n");
-	printf("mandel -x -.38 -y -.665 -s .05 -m 100\n");
-	printf("mandel -x 0.286932 -y 0.014287 -s .0005 -m 1000\n\n");
+    return 0;
 }

@@ -1,21 +1,39 @@
 CC=gcc
-CFLAGS=-c -Wall -g
+CFLAGS=-Wall -g
 LDFLAGS=-ljpeg
-SOURCES= mandel.c jpegrw.c 
-OBJECTS=$(SOURCES:.c=.o)
-EXECUTABLE=mandel
 
-all: $(SOURCES) $(EXECUTABLE) 
+# Executables
+EXEC_MANDEL=mandel
+EXEC_MOVIE=mandelmovie
 
-# pull in dependency info for *existing* .o files
--include $(OBJECTS:.o=.d)
+# Source files
+MANDEL_SRC=mandel.c jpegrw.c
+MOVIE_SRC=mandelmovie.c
 
-$(EXECUTABLE): $(OBJECTS)
-	$(CC) $(OBJECTS) $(LDFLAGS) -o $@
+# Object files
+MANDEL_OBJ=$(MANDEL_SRC:.c=.o)
+MOVIE_OBJ=$(MOVIE_SRC:.c=.o)
 
-.c.o: 
-	$(CC) $(CFLAGS) $< -o $@
+# Default target: build both programs
+all: $(EXEC_MANDEL) $(EXEC_MOVIE)
+
+# Build mandel
+$(EXEC_MANDEL): $(MANDEL_OBJ)
+	$(CC) $(MANDEL_OBJ) $(LDFLAGS) -o $(EXEC_MANDEL)
+
+# Build mandelmovie
+$(EXEC_MOVIE): $(MOVIE_OBJ)
+	$(CC) $(MOVIE_OBJ) $(LDFLAGS) -o $(EXEC_MOVIE)
+
+# Pattern rule for .o + dependency files
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 	$(CC) -MM $< > $*.d
 
+# Include dependency files if they exist
+-include $(MANDEL_OBJ:.o=.d)
+-include $(MOVIE_OBJ:.o=.d)
+
+# Clean target
 clean:
-	rm -rf $(OBJECTS) $(EXECUTABLE) *.d
+	rm -f $(MANDEL_OBJ) $(MOVIE_OBJ) $(EXEC_MANDEL) $(EXEC_MOVIE) *.d
