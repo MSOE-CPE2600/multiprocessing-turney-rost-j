@@ -145,6 +145,6 @@ git push --tags
 - `mandel.c`
 - `frame_00.jpg` … `frame_49.jpg`
 - `mandel.mp4`
-- `runtime_graph.png`
+- `multithreadingVisual.png`
 - `README.md`
 
